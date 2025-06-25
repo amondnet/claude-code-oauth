@@ -12,12 +12,12 @@ on:
         type: boolean
 
 jobs:
-  hello_world_job:
+  refresh-token:
     runs-on: ubuntu-latest
-    name: A job to say hello
+    name: Refresh Claude Token for Repository
     steps:
       - uses: actions/checkout@v4
-      - id: refresh token
+      - id: refresh-token
         uses: ./
         with:
           mode: repo
