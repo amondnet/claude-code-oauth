@@ -4,7 +4,7 @@ on:
       repository:
         description: 'Repository to run the action on'
         required: true
-        default: 'amondnet/claude-code-oauth'
+        default: 'amondnet/claude-code-action'
 
 jobs:
   hello_world_job:
@@ -16,7 +16,7 @@ jobs:
         uses: ./
         with:
           mode: repo
-          target: 'amondnet/claude-code-action'
+          target: ${{ github.event.inputs.repository }}
           token: ${{ secrets.GITHUB_TOKEN }}
           access_token: ${{ secrets.CLAUDE_ACCESS_TOKEN }}
           refresh_token: ${{ secrets.CLAUDE_REFRESH_TOKEN }}
