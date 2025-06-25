@@ -5,6 +5,11 @@ on:
         description: 'Repository to run the action on'
         required: true
         default: 'amondnet/claude-code-action'
+      force:
+        description: 'Force refresh the token even if it is still valid'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   hello_world_job:
@@ -21,3 +26,5 @@ jobs:
           access_token: ${{ secrets.CLAUDE_ACCESS_TOKEN }}
           refresh_token: ${{ secrets.CLAUDE_REFRESH_TOKEN }}
           expires_at: ${{ secrets.CLAUDE_EXPIRES_AT }}
+          force: ${{ github.event.inputs.force }}
+
