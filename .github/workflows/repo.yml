@@ -1,0 +1,23 @@
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: 'Repository to run the action on'
+        required: true
+        default: 'amondnet/claude-code-oauth'
+
+jobs:
+  hello_world_job:
+    runs-on: ubuntu-latest
+    name: A job to say hello
+    steps:
+      - uses: actions/checkout@v4
+      - id: refresh token
+        uses: ./
+        with:
+          mode: repo
+          target: 'amondnet/claude-code-action'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          access_token: ${{ secrets.CLAUDE_ACCESS_TOKEN }}
+          refresh_token: ${{ secrets.CLAUDE_REFRESH_TOKEN }}
+          expires_at: ${{ secrets.CLAUDE_EXPIRES_AT }}

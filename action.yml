@@ -1,0 +1,180 @@
+name: 'Refresh Claude OAuth Token'
+description: 'Greet someone'
+inputs:
+  mode:
+    description: 'The mode to use for updating the secrets. Can be "repo" or "org".'
+    required: true
+    default: 'repo'
+  target:
+    description: 'The target repository or organization to update the secrets for. Required if mode is "org".'
+    required: true
+    default: ''
+  force:
+    description: 'Force refresh the token even if it is still valid'
+    required: false
+    default: 'false'
+  token:
+    description: 'GitHub token with permissions to update secrets'
+    required: true
+    default: '${{ secrets.GITHUB_TOKEN }}'
+  token_url:
+    description: 'The URL to refresh the OAuth token'
+    required: true
+    default: 'https://console.anthropic.com/v1/oauth/token'
+  client_id:
+    description: 'The client ID for the OAuth application'
+    required: true
+    default: '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
+  access_token:
+    description: 'The current access token'
+    required: true
+  refresh_token:
+    description: 'The current refresh token to use for refreshing the access token'
+    required: true
+  expires_at:
+    description: 'The expiration time of the current access token in milliseconds since epoch'
+    required: true
+  access_token_secret:
+    description: 'The name of the GitHub secret where the access token is stored'
+    required: false
+    default: 'CLAUDE_ACCESS_TOKEN'
+  refresh_token_secret:
+    description: 'The name of the GitHub secret where the access token is stored'
+    required: false
+    default: 'CLAUDE_REFRESH_TOKEN'
+  expires_at_secret:
+    description: 'The name of the GitHub secret where the access token is stored'
+    required: false
+    default: 'CLAUDE_EXPIRES_AT'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check token expiration
+      id: check-expiration
+      shell: bash
+      run: |
+        CURRENT_TIME_MS=$(date +%s000)
+        
+        echo "Current time: $CURRENT_TIME_MS"
+        echo "Token expires at: $EXPIRES_AT"
+        
+        # 1시간 임계값으로 갱신 필요 여부 체크
+        THRESHOLD=$((CURRENT_TIME_MS + 3600000))
+        
+        # Force 옵션이 활성화된 경우 무조건 갱신
+        if [ "${{ inputs.force }}" = "true" ]; then
+          echo "Force refresh requested"
+          echo "TOKEN_VALID=false" >> $GITHUB_OUTPUT
+        elif [ "$THRESHOLD" -lt "$EXPIRES_AT" ]; then
+          echo "Token still valid"
+          echo "TOKEN_VALID=true" >> $GITHUB_OUTPUT
+        else
+          echo "Token needs refresh within 1 hour, refreshing..."
+          echo "TOKEN_VALID=false" >> $GITHUB_OUTPUT
+        fi
+      env:
+        EXPIRES_AT: ${{ inputs.expires_at }}
+
+    - name: Refresh Claude Token
+      id: refresh
+      if: steps.check-expiration.outputs.TOKEN_VALID == 'false'
+      shell: bash
+      env:
+        TOKEN_URL: ${{ inputs.token_url }}
+        CLIENT_ID: ${{ inputs.client_id }}
+        ACCESS_TOKEN: ${{ inputs.access_token }}
+        REFRESH_TOKEN: ${{ inputs.refresh_token }}
+      run: |
+        # 토큰 갱신 요청 (curl 사용)
+        RESPONSE=$(curl -s -w "HTTPSTATUS:%{http_code}" -X POST ${{ inputs.token_url }} \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"grant_type\": \"refresh_token\",
+            \"refresh_token\": \"$REFRESH_TOKEN\",
+            \"client_id\": \"$CLIENT_ID\"
+          }")
+        
+        # HTTP 상태 코드와 응답 분리
+        HTTP_STATUS=$(echo $RESPONSE | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+        RESPONSE_BODY=$(echo $RESPONSE | sed -e 's/HTTPSTATUS:.*//g')
+        
+        if [ "$HTTP_STATUS" -ne 200 ]; then
+          echo "Error: HTTP $HTTP_STATUS"
+          echo "Response: $RESPONSE_BODY"
+          exit 1
+        fi
+        
+        # JSON 응답에서 토큰 정보 추출
+        NEW_ACCESS_TOKEN=$(echo "$RESPONSE_BODY" | jq -r '.access_token')
+        NEW_REFRESH_TOKEN=$(echo "$RESPONSE_BODY" | jq -r '.refresh_token // empty')
+        EXPIRES_IN=$(echo "$RESPONSE_BODY" | jq -r '.expires_in')
+
+        # 필수 필드 검증
+        if [ -z "$NEW_ACCESS_TOKEN" ] || [ "$NEW_ACCESS_TOKEN" = "null" ]; then
+          echo "Error: Failed to extract access token from response"
+          exit 1
+        fi
+        
+        if [ -z "$EXPIRES_IN" ] || [ "$EXPIRES_IN" = "null" ]; then
+          echo "Error: Failed to extract expires_in from response"
+          exit 1
+        fi
+
+        CURRENT_TIME_MS=$(date +%s000)
+
+        # 새 만료 시간 계산 (현재 시간 + expires_in * 1000)
+        NEW_EXPIRES_AT=$((CURRENT_TIME_MS + (EXPIRES_IN * 1000)))
+        
+        # 새 refresh_token이 없으면 기존 것 유지 (원본 로직과 동일)
+        if [ "$NEW_REFRESH_TOKEN" = "null" ] || [ -z "$NEW_REFRESH_TOKEN" ]; then
+          NEW_REFRESH_TOKEN="$REFRESH_TOKEN"
+        fi
+        
+        echo "Token refreshed successfully"
+        echo "New token expires at: $NEW_EXPIRES_AT"
+        
+        # GitHub Actions outputs 설정
+        echo "TOKEN_REFRESHED=true" >> $GITHUB_OUTPUT
+        echo "::add-mask::$NEW_ACCESS_TOKEN"
+        echo "NEW_ACCESS_TOKEN=$NEW_ACCESS_TOKEN" >> $GITHUB_OUTPUT
+        echo "::add-mask::$NEW_REFRESH_TOKEN"
+        echo "NEW_REFRESH_TOKEN=$NEW_REFRESH_TOKEN" >> $GITHUB_OUTPUT
+        echo "NEW_EXPIRES_AT=$NEW_EXPIRES_AT" >> $GITHUB_OUTPUT
+
+
+    - name: Update GitHub Secrets
+      if: steps.refresh.outputs.TOKEN_REFRESHED == 'true'
+      shell: bash
+      run: |
+        echo "Updating GitHub secrets..."
+        
+        # 토큰 값 검증 후 업데이트
+        if [ -n "${{ steps.refresh.outputs.NEW_ACCESS_TOKEN }}" ]; then
+          gh secret set "${{ inputs.access_token_secret }}" --body "${{ steps.refresh.outputs.NEW_ACCESS_TOKEN }}" --${{ inputs.mode }} "${{ inputs.target }}"
+          echo "Access token updated"
+        else
+          echo "Error: New access token is empty"
+          exit 1
+        fi
+        
+        if [ -n "${{ steps.refresh.outputs.NEW_REFRESH_TOKEN }}" ]; then
+          gh secret set "${{ inputs.refresh_token_secret }}" --body "${{ steps.refresh.outputs.NEW_REFRESH_TOKEN }}" --${{ inputs.mode }} "${{ inputs.target }}"
+          echo "Refresh token updated"
+        else
+          echo "Error: New refresh token is empty"
+          exit 1
+        fi
+        
+        if [ -n "${{ steps.refresh.outputs.NEW_EXPIRES_AT }}" ]; then
+          gh secret set "${{ inputs.expires_at_secret }}" --body "${{ steps.refresh.outputs.NEW_EXPIRES_AT }}" --${{ inputs.mode }} "${{ inputs.target }}"
+          echo "Expires at updated"
+        else
+          echo "Error: New expires at is empty"
+          exit 1
+        fi
+        
+        echo "GitHub secrets updated successfully"
+      env:
+        GH_TOKEN: ${{ inputs.TOKEN }}
+
