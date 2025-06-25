@@ -26,5 +26,5 @@ jobs:
           access_token: ${{ secrets.CLAUDE_ACCESS_TOKEN }}
           refresh_token: ${{ secrets.CLAUDE_REFRESH_TOKEN }}
           expires_at: ${{ secrets.CLAUDE_EXPIRES_AT }}
-          force: ${{ github.event.inputs.force }}
+          force: '${{ github.event.inputs.force }}'
 
